@@ -1,8 +1,13 @@
 #include "coursework.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include <pthread.h>
 #include <unistd.h>
+#include <pthread.h>
+
+/*
+    RR Bounded (Round Robin with Bounding Buffer) Implementation of predefined process.
+    Predefined constraints are preprocessor macros in 'coursework.h'
+*/
 
 // Using this as a helper function
 void swap(struct process** left, struct process** right)
@@ -12,42 +17,54 @@ void swap(struct process** left, struct process** right)
     *right = temp;
 }
 
-// Take address of head because the head may well change during adding of a new process, the head pointer passed into the function shall remain valid.
-void add_process(pthread_mutex_t* lock, struct process** head, struct process* a_process)
+// Quick and dirty way to get size of linked list. size_t as opposed to unsigned int as values inputted into things like operator[] are not unsigned ints, and do have different limits.
+// size_t declared in stdlib.h and stddef.h iirc.
+size_t list_size(struct process* head)
 {
-    pthread_mutex_lock(lock);
-    struct process* process_head = *head;
-    if(a_process->iBurstTime < process_head->iBurstTime)
+    size_t size = 0;
+    while(head != (void*)0)
     {
-        swap(head, &a_process);
-        process_head->oNext = a_process;
-        return;
+        size++;
+        head = head->oNext;
     }
-    struct process* iter = process_head;
-    while(iter->iBurstTime < a_process->iBurstTime)
-    {
-        // (void*)0 is basically exactly what the macro NULL does. Using it like this as NULL confuses me when it's just referring to memloc 0, not necessarily a nullptr
-        if(iter->oNext == (void*)0)
-        {
-            // at the end of the linked list, so this is the longest burst time so far, so make it the tail
-            iter->oNext = a_process;
-            break;
-        }
-        if(iter->oNext->iBurstTime > a_process->iBurstTime)
-        {
-            // needs to be inserted between iter and iter next
-            struct process* tmp = iter->oNext;
-            iter->oNext = a_process;
-            a_process->oNext = tmp;
-        }
-        iter = iter->oNext;
-    }
-    pthread_mutex_unlock(lock);
+    return size;
 }
 
-void remove_process(pthread_mutex_t* lock, struct process** head, struct process* to_remove)
+/* pthread functionality requires that all functions ran on a separate thread must return void* and take a single void* parameter.
+however, multiple parameters will be requires, such as a pointer to the head of the process list, a mutex lock etc.
+to solve this, the following structs are used to contain all required data:
+*/
+
+struct creator_pack
 {
-    pthread_mutex_lock(lock);
+    pthread_mutex_t* mutex_handle;
+    struct process* head;
+};
+
+struct consumer_pack
+{
+    pthread_mutex_t* mutex_handle;
+    struct process* head;
+    // Want to access the totals values to edit them with any consumption of processes performed.
+    unsigned int* total_response_time;
+    unsigned int* total_turnaround_time;
+};
+
+// RR, add the process to the end of the list.
+void add_process(struct process* head, struct process* a_process)
+{
+    if(head == (void*)0)
+        return;
+    while(head->oNext != (void*)0)
+    {
+        head = head->oNext;
+    }
+    head->oNext = a_process;
+}
+
+// Take double pointer to head remains true.
+void remove_process(struct process** head, struct process* to_remove)
+{
     struct process* process_head = *head;
     if(process_head == (void*)0)
         return;
@@ -67,154 +84,75 @@ void remove_process(pthread_mutex_t* lock, struct process** head, struct process
         }
         process_head = process_head->oNext;
     }
-    pthread_mutex_unlock(lock);
 }
 
-size_t list_size(struct process* head)
+int is_finished(struct process* a_process)
 {
-    size_t size = 0;
-    while(head != (void*)0)
+    return a_process->iState == FINISHED;
+}
+
+int all_finished(struct process* process_head)
+{
+    while(process_head != (void*)0)
     {
-        size++;
-        head = head->oNext;
+        if(process_head->iState != FINISHED)
+            return 0;
+        process_head = process_head->oNext;
     }
-    return size;
-}
-
-struct process_creator
-{
-    pthread_mutex_t* lock;
-    struct process* process_head;
-};
-
-// Take in a head. Must be the only element in the list.
-void* fill_processes(void* process_creator_v)
-{
-    struct process_creator* creator = (struct process_creator*) process_creator_v;
-    //pthread_mutex_lock(creator->lock);
-    size_t size = 1;
-    while(size < NUMBER_OF_PROCESSES)
-    {
-        if(list_size(creator->process_head) < BUFFER_SIZE)
-        {
-            // enough space to add a new process.
-            add_process(creator->lock, &creator->process_head, generateProcess());
-            size++;
-            printf("added process (%d/%d)\n", size, NUMBER_OF_PROCESSES);
-        }
-        else
-        {
-            //pthread_mutex_unlock(creator->lock);
-            printf("list size = %d, waiting...\n", list_size(creator->process_head));
-            sleep(1);
-            //pthread_mutex_lock(creator->lock);
-            // we just have to wait until there's space.
-        }
-    }
-    //pthread_mutex_unlock(creator->lock);
-    pthread_exit(NULL);
-}
-
-struct process_consumer_singular
-{
-    pthread_mutex_t* lock;
-    struct process* process_head;
-    struct process* a_process;
-    unsigned int* total_response_time;
-    unsigned int* total_turnaround_time;
-};
-
-struct process_consumer_all
-{
-    pthread_mutex_t* lock;
-    struct process* process_head;
-    unsigned int* total_response_time;
-    unsigned int* total_turnaround_time;
-};
-
-void* consume_process(void* a_process_consumer_v/*void* process_head_v, void* process_v, void* total_response_time_v, void* total_turnaround_time_v*/)
-{
-    struct process_consumer_singular* a_process_consumer = (struct process_consumer_singular*) a_process_consumer_v;
-    struct timeval start, end;
-    pthread_mutex_lock(a_process_consumer->lock);
-    simulateSJFProcess(a_process_consumer->a_process, &start, &end);
-    unsigned int response_time = getDifferenceInMilliSeconds(a_process_consumer->a_process->oTimeCreated, start);
-    unsigned int turnaround_time = getDifferenceInMilliSeconds(a_process_consumer->a_process->oTimeCreated, end);
-    printf("consumed process took %ld ms response time and %ld ms turnaround time\n", response_time, turnaround_time);
-    *(a_process_consumer->total_response_time) += response_time;
-    *(a_process_consumer->total_turnaround_time) += turnaround_time;
-    printf("killing and freeing process..\n");
-    remove_process(a_process_consumer->lock, &a_process_consumer->process_head, a_process_consumer->a_process);
-    printf("process killed.\n");
-    pthread_mutex_unlock(a_process_consumer->lock);
-}
-
-void* consume_processes(void* process_consumer_v/*void* process_head_v, void* total_response_time_v, void* total_turnaround_time_v*/)
-{
-    struct process_consumer_all* consumer = (struct process_consumer_all*) process_consumer_v;
-    while(list_size(consumer->process_head) > 0)
-    {
-        struct process_consumer_singular single;
-        single.lock = consumer->lock;
-        single.process_head = consumer->process_head;
-        single.a_process = consumer->process_head->oNext;
-        single.total_response_time = consumer->total_response_time;
-        single.total_turnaround_time = consumer->total_turnaround_time;
-        consume_process((void*)&single);
-        printf("consumed process. (%d/%d)", list_size(consumer->process_head), NUMBER_OF_PROCESSES);
-    }
-    pthread_exit(NULL);
+    return 1;
 }
 
 int main()
 {
-    pthread_mutex_t lock;
     unsigned int total_turnaround_time = 0;
     unsigned int total_response_time = 0;
     // Give me a process. Linked List is currently sorted as contains one element.
     struct process* process_head = generateProcess();
+    struct process* process_tail = process_head;
     unsigned int i;
     // make number of processes we've allocated equal to the macro
-    /*
-    for(i = 0; i <= NUMBER_OF_PROCESSES + 1; i++)
+    for(i = 0; i < NUMBER_OF_PROCESSES; i++)
     {
         struct process* a_process = generateProcess();
-        add_process(&process_head, a_process);
+        add_process(process_head, a_process);
+        process_tail = a_process;
     }
-    */
-    // Initialise mutex so we can use it later to lock the process during destruction of a member.
-    pthread_mutex_init(&lock, NULL);
-    pthread_t creator_thread_handle, consumer_thread_handle;
-    struct process_creator creator;
-    creator.lock = &lock;
-    creator.process_head = process_head;
-    pthread_create(&creator_thread_handle, NULL, fill_processes, (void*)&creator);
-    //pthread_join(creator_thread_handle, NULL);
-    struct process_consumer_all consumer;
-    consumer.lock = &lock;
-    consumer.process_head = process_head;
-    consumer.total_response_time = &total_response_time;
-    consumer.total_turnaround_time = &total_turnaround_time;
-    pthread_create(&consumer_thread_handle, NULL, consume_processes, (void*)&consumer);
-    /*
-    struct process* tmp;
-    while (process_head != (void*)0)
+
+    pthread_mutex_t lock;
+    pthread_t creator_thread_handle;
+    // Creator thread separate. Consumption thread unnecessary as that will be done in the main thread.
+    // The reason I do not create another thread for consumption as the main thread will just wait for it anyway so might aswell use it.
+
+    struct process* tmp = process_head;
+    while(!all_finished(process_head))
     {
-         tmp = process_head;
-         process_head = process_head->oNext;
-         struct timeval start, end;
-         simulateSJFProcess(tmp, &start, &end);
-         unsigned int response_time = getDifferenceInMilliSeconds(tmp->oTimeCreated, start);
-         unsigned int turnaround_time = getDifferenceInMilliSeconds(tmp->oTimeCreated, end);
-         printf("process took %ld ms response time and %ld ms turnaround time\n", response_time, turnaround_time);
-         total_response_time += response_time;
-         total_turnaround_time += turnaround_time;
-         free(tmp);
+        struct timeval start, end;
+        int previous_burst = tmp->iBurstTime;
+        int already_running = 0;
+        if(tmp->iState == RUNNING || tmp->iState == READY)
+            already_running = 1;
+        simulateRoundRobinProcess(tmp, &start, &end);
+        unsigned int response_time = getDifferenceInMilliSeconds(tmp->oTimeCreated, start);
+        printf("pid = %d, previous burst = %d, new burst = %d", tmp->iProcessId, previous_burst, tmp->iBurstTime);
+        if(!already_running)
+        {
+            printf(", response time = %ld", response_time);
+            total_response_time += response_time;
+        }
+        struct process* check = tmp;
+        if(tmp->oNext == (void*)0)
+            tmp = process_head;
+        else
+            tmp = tmp->oNext;
+        if(is_finished(check))
+        {
+            unsigned int turnaround_time = getDifferenceInMilliSeconds(tmp->oTimeCreated, end);
+            printf(", turnaround time = %ld", turnaround_time);
+            total_turnaround_time += turnaround_time;
+            remove_process(&process_head, check);
+        }
+        printf("\n");
     }
-    */
-    pthread_join(creator_thread_handle, NULL);
-    pthread_join(consumer_thread_handle, NULL);
-    pthread_mutex_destroy(&lock);
     printf("Done. Average Response Time = %ldms, Average Turnaround Time = %ldms\n", total_response_time / NUMBER_OF_PROCESSES, total_turnaround_time / NUMBER_OF_PROCESSES);
     return 0;
 }
