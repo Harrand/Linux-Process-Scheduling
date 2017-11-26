@@ -2,6 +2,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+
+/*
+    RR (Round Robin) Implementation of predefined process.
+    Predefined constraints are preprocessor macros in 'coursework.h'
+*/
+
 // Using this as a helper function
 void swap(struct process** left, struct process** right)
 {
