@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <assert.h>
 
 /*
     RR Bounded (Round Robin with Bounding Buffer) Implementation of predefined process.
@@ -38,21 +39,25 @@ to solve this, the following structs are used to contain all required data:
 struct creator_pack
 {
     pthread_mutex_t* mutex_handle;
+    // This is the shared data. Although this is just a copy of a pointer, the data being pointed to is the shared data.
+    // Therefore whenever consumer runs or edits any process in the list in anyway, mutex lock must be invoked during such execution.
     struct process* head;
 };
 
 struct consumer_pack
 {
     pthread_mutex_t* mutex_handle;
+    // still is the shared data.
     struct process* head;
     // Want to access the totals values to edit them with any consumption of processes performed.
     unsigned int* total_response_time;
     unsigned int* total_turnaround_time;
 };
 
-// RR, add the process to the end of the list.
-void add_process(struct process* head, struct process* a_process)
+// RR, add the process to the end of the list. edits the list so MUST be mutex locked.
+void add_process(pthread_mutex_t* lock, struct process* head, struct process* a_process)
 {
+    pthread_mutex_lock(lock);
     if(head == (void*)0)
         return;
     while(head->oNext != (void*)0)
@@ -60,11 +65,41 @@ void add_process(struct process* head, struct process* a_process)
         head = head->oNext;
     }
     head->oNext = a_process;
+    pthread_mutex_unlock(lock);
 }
 
-// Take double pointer to head remains true.
-void remove_process(struct process** head, struct process* to_remove)
+// Must be ran on a creator package where the process head is just one element.
+void* create_processes(void* creator_package)
 {
+    struct creator_pack* creator = (struct creator_pack*) creator_package;
+    printf("Asserting list_size == 1...\n");
+    assert(list_size(creator->head) == 1);
+    size_t processes_created = 1;
+    while(processes_created < NUMBER_OF_PROCESSES)
+    {
+        // this thread keeps trying to create new processes until the number of processes made in total is what we need.
+        if(list_size(creator->head) <= BUFFER_SIZE)
+        {
+            // we have space to generate a new process, so do so.
+            struct process* new_process = generateProcess();
+            add_process(creator->mutex_handle, creator->head, new_process);
+            printf("Adding process to end of the list.");
+        }
+        else
+        {
+            // we arent allowed to generate a new process. the mutex is not locked so we wait, i.e do nothing and sleep.
+            printf("Buffer Size exceeded, waiting...\n");
+            sleep(1);
+        }
+    }
+    pthread_exit(NULL);
+    // Kill the thread. We're done creating processes.
+}
+
+// Take double pointer to head remains true. edits the list so MUST be locked!
+void remove_process(pthread_mutex_t* lock, struct process** head, struct process* to_remove)
+{
+    pthread_mutex_lock(lock);
     struct process* process_head = *head;
     if(process_head == (void*)0)
         return;
@@ -84,6 +119,12 @@ void remove_process(struct process** head, struct process* to_remove)
         }
         process_head = process_head->oNext;
     }
+    pthread_mutex_unlock(lock);
+}
+
+void* consume_processes(void* consumer_package)
+{
+    struct consumer_pack* consumer = (struct consumer_pack*) consumer_package;
 }
 
 int is_finished(struct process* a_process)
