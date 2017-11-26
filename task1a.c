@@ -10,6 +10,17 @@ void swap(struct process** left, struct process** right)
     *right = temp;
 }
 
+size_t list_size(struct process* head)
+{
+    size_t size = 0;
+    while(head != (void*)0)
+    {
+        size++;
+        head = head->oNext;
+    }
+    return size;
+}
+
 // Take address of head because the head may well change during adding of a new process, the head pointer passed into the function shall remain valid.
 void add_process(struct process** head, struct process* a_process)
 {
@@ -17,7 +28,7 @@ void add_process(struct process** head, struct process* a_process)
     if(a_process->iBurstTime < process_head->iBurstTime)
     {
         swap(head, &a_process);
-        process_head->oNext = a_process;
+        (*head)->oNext = a_process;
         return;
     }
     struct process* iter = process_head;
@@ -38,6 +49,30 @@ void add_process(struct process** head, struct process* a_process)
             a_process->oNext = tmp;
         }
         iter = iter->oNext;
+    }
+}
+
+// Take double pointer to head remains true.
+void remove_process(struct process** head, struct process* to_remove)
+{
+    struct process* process_head = *head;
+    if(process_head == (void*)0)
+        return;
+    if(process_head == to_remove)
+    {
+        struct process* tmp = process_head;
+        head = &process_head->oNext;
+        free(process_head);
+    }
+    while(process_head->oNext != (void*)0)
+    {
+        if(process_head->oNext == to_remove)
+        {
+            if(to_remove->oNext != (void*)0)
+                process_head->oNext = to_remove->oNext;
+            free(to_remove);
+        }
+        process_head = process_head->oNext;
     }
 }
 
@@ -62,14 +97,15 @@ int main()
          tmp = process_head;
          process_head = process_head->oNext;
          struct timeval start, end;
+         int previous_burst = tmp->iBurstTime;
          simulateSJFProcess(tmp, &start, &end);
          unsigned int response_time = getDifferenceInMilliSeconds(tmp->oTimeCreated, start);
          unsigned int turnaround_time = getDifferenceInMilliSeconds(tmp->oTimeCreated, end);
-         printf("process took %ld ms response time and %ld ms turnaround time\n", response_time, turnaround_time);
+         printf("process id = %d, previous burst = %d, new burst = %d, response time = %ld, turn around time = %ld\n", tmp->iProcessId, previous_burst, tmp->iBurstTime, response_time, turnaround_time);
          total_response_time += response_time;
          total_turnaround_time += turnaround_time;
-         free(tmp);
+         remove_process(&process_head, tmp);
     }
-    printf("Done. Average Response Time = %ldms, Average Turnaround Time = %ldms\n", total_response_time / NUMBER_OF_PROCESSES, total_turnaround_time / NUMBER_OF_PROCESSES);
+    printf("Average Response Time = %ldms, Average Turnaround Time = %ldms\n", total_response_time / NUMBER_OF_PROCESSES, total_turnaround_time / NUMBER_OF_PROCESSES);
     return 0;
 }
