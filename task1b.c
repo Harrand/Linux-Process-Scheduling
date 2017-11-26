@@ -83,10 +83,17 @@ int main()
     {
         struct timeval start, end;
         int previous_burst = tmp->iBurstTime;
+        int already_running = 0;
+        if(tmp->iState == RUNNING || tmp->iState == READY)
+            already_running = 1;
         simulateRoundRobinProcess(tmp, &start, &end);
         unsigned int response_time = getDifferenceInMilliSeconds(tmp->oTimeCreated, start);
-        printf("pid = %d, previous burst = %d, new burst = %d, response time = %ld\n", tmp->iProcessId, previous_burst, tmp->iBurstTime, response_time);
-        total_response_time += response_time;
+        printf("pid = %d, previous burst = %d, new burst = %d", tmp->iProcessId, previous_burst, tmp->iBurstTime);
+        if(!already_running)
+        {
+            printf(", response time = %ld", response_time);
+            total_response_time += response_time;
+        }
         struct process* check = tmp;
         if(tmp->oNext == (void*)0)
             tmp = process_head;
@@ -95,10 +102,11 @@ int main()
         if(is_finished(check))
         {
             unsigned int turnaround_time = getDifferenceInMilliSeconds(tmp->oTimeCreated, end);
-            printf("process finished with %ld ms response time and %ld ms turnaround time\n", response_time, turnaround_time);
+            printf(", turnaround time = %ld", turnaround_time);
             total_turnaround_time += turnaround_time;
             remove_process(&process_head, check);
         }
+        printf("\n");
     }
     printf("Done. Average Response Time = %ldms, Average Turnaround Time = %ldms\n", total_response_time / NUMBER_OF_PROCESSES, total_turnaround_time / NUMBER_OF_PROCESSES);
     return 0;
