@@ -140,12 +140,18 @@ void* consume_processes(void* consumer_package)
     printf("beginning to consume processes...\n");
     printf("list size upon begin = %d\n", list_size(consumer->head));
     printf("creating finished = %d\n", *(consumer->creating_finished));
-    while(*(consumer->creating_finished) == 0 && list_size(consumer->head) > 1)
+    while(*(consumer->creating_finished) == 0)
     {
         // tasks are still on their way and we need to be ready for them too.
         // just make sure we dont complete the last task.
         // we cant hack through this though, we do first come first serve. this is why we need the tail i.e never process tail until the loop is ending.
         printf("beginning thread processing...\n");
+        if(list_size(consumer->head) <= 1)
+        {
+            printf("too few processes, waiting for more...\n");
+            sleep(1);
+            continue;
+        }
         pthread_mutex_lock(consumer->mutex_handle);
         // perform processing
         struct timeval start, end;
@@ -176,7 +182,6 @@ void* consume_processes(void* consumer_package)
             remove_process(consumer->mutex_handle, &head_cache, check);
         }
         printf("\n");
-        
     }
 
     pthread_exit(NULL);
