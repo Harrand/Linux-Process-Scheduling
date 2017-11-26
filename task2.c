@@ -42,6 +42,7 @@ struct creator_pack
     // This is the shared data. Although this is just a copy of a pointer, the data being pointed to is the shared data.
     // Therefore whenever consumer runs or edits any process in the list in anyway, mutex lock must be invoked during such execution.
     struct process* head;
+    unsigned int* creating_finished;
 };
 
 struct consumer_pack
@@ -49,6 +50,8 @@ struct consumer_pack
     pthread_mutex_t* mutex_handle;
     // still is the shared data.
     struct process* head;
+    struct process* tail;
+    unsigned int* creating_finished;
     // Want to access the totals values to edit them with any consumption of processes performed.
     unsigned int* total_response_time;
     unsigned int* total_turnaround_time;
@@ -83,7 +86,7 @@ void* create_processes(void* creator_package)
             // we have space to generate a new process, so do so.
             struct process* new_process = generateProcess();
             add_process(creator->mutex_handle, creator->head, new_process);
-            printf("Adding process to end of the list.");
+            printf("Adding process to end of the list.\n");
         }
         else
         {
@@ -92,6 +95,10 @@ void* create_processes(void* creator_package)
             sleep(1);
         }
     }
+    pthread_mutex_lock(creator->mutex_handle);
+    *(creator->creating_finished) = 1;
+    pthread_mutex_unlock(creator->mutex_handle);
+    // Make the bool true so the other thread can safely read. Shouldn't need to mutex this.
     pthread_exit(NULL);
     // Kill the thread. We're done creating processes.
 }
@@ -120,11 +127,60 @@ void remove_process(pthread_mutex_t* lock, struct process** head, struct process
         process_head = process_head->oNext;
     }
     pthread_mutex_unlock(lock);
+    printf("killed a process after its done.\n");
 }
 
 void* consume_processes(void* consumer_package)
 {
     struct consumer_pack* consumer = (struct consumer_pack*) consumer_package;
+    struct process* head_cache = consumer->head;
+    // when this begins, we will have definitely at least one process in the linked list. apart from that, everything is off the cards.
+    // we must not process and finish the last process (head) though until more are made or no more are being made and we're about to finish up.
+    // the reason for this is that there will be a dangling head ptr which will segfault when the other thread tries to add another process after it.
+    printf("beginning to consume processes...\n");
+    printf("list size upon begin = %d\n", list_size(consumer->head));
+    printf("creating finished = %d\n", *(consumer->creating_finished));
+    while(*(consumer->creating_finished) == 0 && list_size(consumer->head) > 1)
+    {
+        // tasks are still on their way and we need to be ready for them too.
+        // just make sure we dont complete the last task.
+        // we cant hack through this though, we do first come first serve. this is why we need the tail i.e never process tail until the loop is ending.
+        printf("beginning thread processing...\n");
+        pthread_mutex_lock(consumer->mutex_handle);
+        // perform processing
+        struct timeval start, end;
+        int previous_burst = consumer->head->iBurstTime;
+        int already_running = 0;
+        if(consumer->head->iState == RUNNING || consumer->head->iState == READY)
+            already_running = 1;
+        simulateRoundRobinProcess(consumer->head, &start, &end);
+        unsigned int response_time = getDifferenceInMilliSeconds(consumer->head->oTimeCreated, start);
+        printf("pid = %d, previous burst = %d, new burst = %d", consumer->head->iProcessId, previous_burst, consumer->head->iBurstTime);
+        if(!already_running)
+        {
+            printf(", response time = %ld", response_time);
+            *(consumer->total_response_time) += response_time;
+        }
+        pthread_mutex_unlock(consumer->mutex_handle);
+        // now delete it.
+        struct process* check = consumer->head;
+        if(consumer->head->oNext == (void*)0)
+            consumer->head = head_cache;
+        else
+            consumer->head = consumer->head->oNext;
+        if(is_finished(check))
+        {
+            unsigned int turnaround_time = getDifferenceInMilliSeconds(consumer->head->oTimeCreated, end);
+            printf(", turnaround time = %ld", turnaround_time);
+            *(consumer->total_turnaround_time) += turnaround_time;
+            remove_process(consumer->mutex_handle, &head_cache, check);
+        }
+        printf("\n");
+        
+    }
+
+    pthread_exit(NULL);
+    // Kill the thread.
 }
 
 int is_finished(struct process* a_process)
@@ -152,48 +208,35 @@ int main()
     struct process* process_tail = process_head;
     unsigned int i;
     // make number of processes we've allocated equal to the macro
+    /*
     for(i = 0; i < NUMBER_OF_PROCESSES; i++)
     {
         struct process* a_process = generateProcess();
         add_process(process_head, a_process);
         process_tail = a_process;
     }
-
+    */
+    unsigned int create_done = 0;
     pthread_mutex_t lock;
-    pthread_t creator_thread_handle;
+    pthread_t creator_thread_handle, consumer_thread_handle;
+    struct creator_pack creator;
+    creator.mutex_handle = &lock;
+    creator.head = process_head;
+    creator.creating_finished = &create_done;
+    pthread_create(&creator_thread_handle, NULL, create_processes, &creator);
+    struct consumer_pack consumer;
+    consumer.mutex_handle = &lock;
+    consumer.head = process_head;
+    consumer.tail = process_tail;
+    consumer.creating_finished = &create_done;
+    consumer.total_response_time = &total_response_time;
+    consumer.total_turnaround_time = &total_turnaround_time;
+    pthread_create(&consumer_thread_handle, NULL, consume_processes, &consumer);
     // Creator thread separate. Consumption thread unnecessary as that will be done in the main thread.
     // The reason I do not create another thread for consumption as the main thread will just wait for it anyway so might aswell use it.
 
-    struct process* tmp = process_head;
-    while(!all_finished(process_head))
-    {
-        struct timeval start, end;
-        int previous_burst = tmp->iBurstTime;
-        int already_running = 0;
-        if(tmp->iState == RUNNING || tmp->iState == READY)
-            already_running = 1;
-        simulateRoundRobinProcess(tmp, &start, &end);
-        unsigned int response_time = getDifferenceInMilliSeconds(tmp->oTimeCreated, start);
-        printf("pid = %d, previous burst = %d, new burst = %d", tmp->iProcessId, previous_burst, tmp->iBurstTime);
-        if(!already_running)
-        {
-            printf(", response time = %ld", response_time);
-            total_response_time += response_time;
-        }
-        struct process* check = tmp;
-        if(tmp->oNext == (void*)0)
-            tmp = process_head;
-        else
-            tmp = tmp->oNext;
-        if(is_finished(check))
-        {
-            unsigned int turnaround_time = getDifferenceInMilliSeconds(tmp->oTimeCreated, end);
-            printf(", turnaround time = %ld", turnaround_time);
-            total_turnaround_time += turnaround_time;
-            remove_process(&process_head, check);
-        }
-        printf("\n");
-    }
+    pthread_join(creator_thread_handle, NULL);
+    pthread_join(consumer_thread_handle, NULL);
     printf("Done. Average Response Time = %ldms, Average Turnaround Time = %ldms\n", total_response_time / NUMBER_OF_PROCESSES, total_turnaround_time / NUMBER_OF_PROCESSES);
     return 0;
 }
