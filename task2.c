@@ -47,7 +47,7 @@ void add_process(pthread_mutex_t* lock, struct process** head, struct process* a
 
 void remove_process(pthread_mutex_t* lock, struct process** head, struct process* to_remove)
 {
-    //pthread_mutex_lock(lock);
+    pthread_mutex_lock(lock);
     struct process* process_head = *head;
     if(process_head == (void*)0)
         return;
@@ -67,7 +67,7 @@ void remove_process(pthread_mutex_t* lock, struct process** head, struct process
         }
         process_head = process_head->oNext;
     }
-    //pthread_mutex_unlock(lock);
+    pthread_mutex_unlock(lock);
 }
 
 size_t list_size(struct process* head)
