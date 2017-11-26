@@ -41,7 +41,7 @@ struct creator_pack
     pthread_mutex_t* mutex_handle;
     // This is the shared data. Although this is just a copy of a pointer, the data being pointed to is the shared data.
     // Therefore whenever consumer runs or edits any process in the list in anyway, mutex lock must be invoked during such execution.
-    struct process* head;
+    struct process** head;
     unsigned int* creating_finished;
 };
 
@@ -49,7 +49,8 @@ struct consumer_pack
 {
     pthread_mutex_t* mutex_handle;
     // still is the shared data.
-    struct process* head;
+    // head is a double ptr because the head position will change alot.
+    struct process** head;
     struct process* tail;
     unsigned int* creating_finished;
     // Want to access the totals values to edit them with any consumption of processes performed.
@@ -58,16 +59,17 @@ struct consumer_pack
 };
 
 // RR, add the process to the end of the list. edits the list so MUST be mutex locked.
-void add_process(pthread_mutex_t* lock, struct process* head, struct process* a_process)
+void add_process(pthread_mutex_t* lock, struct process** head, struct process* a_process)
 {
     pthread_mutex_lock(lock);
-    if(head == (void*)0)
-        return;
-    while(head->oNext != (void*)0)
+    struct process* head_cpy = *head;
+    if(head_cpy == (void*)0)
+        *head = a_process;
+    while(head_cpy->oNext != (void*)0)
     {
-        head = head->oNext;
+        head_cpy = head_cpy->oNext;
     }
-    head->oNext = a_process;
+    head_cpy->oNext = a_process;
     pthread_mutex_unlock(lock);
 }
 
@@ -76,22 +78,23 @@ void* create_processes(void* creator_package)
 {
     struct creator_pack* creator = (struct creator_pack*) creator_package;
     printf("Asserting list_size == 1...\n");
-    assert(list_size(creator->head) == 1);
+    assert(list_size(*creator->head) == 1);
     size_t processes_created = 1;
     while(processes_created < NUMBER_OF_PROCESSES)
     {
         // this thread keeps trying to create new processes until the number of processes made in total is what we need.
-        if(list_size(creator->head) <= BUFFER_SIZE)
+        if(list_size(*creator->head) <= BUFFER_SIZE)
         {
             // we have space to generate a new process, so do so.
             struct process* new_process = generateProcess();
             add_process(creator->mutex_handle, creator->head, new_process);
-            printf("Adding process to end of the list.\n");
+            processes_created++;
+            printf("Adding process to end of the list. Created %d/%d in total.\n", processes_created, NUMBER_OF_PROCESSES);
         }
         else
         {
             // we arent allowed to generate a new process. the mutex is not locked so we wait, i.e do nothing and sleep.
-            printf("Buffer Size exceeded, waiting...\n");
+            //printf("Buffer Size exceeded, list size = %d, waiting...\n", list_size(*creator->head));
             sleep(1);
         }
     }
@@ -113,7 +116,7 @@ void remove_process(pthread_mutex_t* lock, struct process** head, struct process
     if(process_head == to_remove)
     {
         struct process* tmp = process_head;
-        head = &process_head->oNext;
+        *head = process_head->oNext;
         free(process_head);
     }
     while(process_head->oNext != (void*)0)
@@ -127,41 +130,37 @@ void remove_process(pthread_mutex_t* lock, struct process** head, struct process
         process_head = process_head->oNext;
     }
     pthread_mutex_unlock(lock);
-    printf("killed a process after its done.\n");
 }
 
 void* consume_processes(void* consumer_package)
 {
     struct consumer_pack* consumer = (struct consumer_pack*) consumer_package;
-    struct process* head_cache = consumer->head;
+    //struct process* head_cache = consumer->head;
+    struct process* head = *consumer->head;
     // when this begins, we will have definitely at least one process in the linked list. apart from that, everything is off the cards.
     // we must not process and finish the last process (head) though until more are made or no more are being made and we're about to finish up.
     // the reason for this is that there will be a dangling head ptr which will segfault when the other thread tries to add another process after it.
-    printf("beginning to consume processes...\n");
-    printf("list size upon begin = %d\n", list_size(consumer->head));
-    printf("creating finished = %d\n", *(consumer->creating_finished));
-    while(*(consumer->creating_finished) == 0)
+    while(*(consumer->creating_finished) == 0 || list_size(head) > 0)
     {
         // tasks are still on their way and we need to be ready for them too.
         // just make sure we dont complete the last task.
         // we cant hack through this though, we do first come first serve. this is why we need the tail i.e never process tail until the loop is ending.
-        printf("beginning thread processing...\n");
-        if(list_size(consumer->head) <= 1)
+        if(list_size(head) <= 1 && (*consumer->creating_finished) == 0)
         {
-            printf("too few processes, waiting for more...\n");
+            //printf("list size is 1 or less, waiting for more...\n");
             sleep(1);
             continue;
         }
         pthread_mutex_lock(consumer->mutex_handle);
         // perform processing
         struct timeval start, end;
-        int previous_burst = consumer->head->iBurstTime;
+        int previous_burst = head->iBurstTime;
         int already_running = 0;
-        if(consumer->head->iState == RUNNING || consumer->head->iState == READY)
+        if(head->iState == RUNNING || head->iState == READY)
             already_running = 1;
-        simulateRoundRobinProcess(consumer->head, &start, &end);
-        unsigned int response_time = getDifferenceInMilliSeconds(consumer->head->oTimeCreated, start);
-        printf("pid = %d, previous burst = %d, new burst = %d", consumer->head->iProcessId, previous_burst, consumer->head->iBurstTime);
+        simulateRoundRobinProcess(head, &start, &end);
+        unsigned int response_time = getDifferenceInMilliSeconds(head->oTimeCreated, start);
+        printf("pid = %d, previous burst = %d, new burst = %d", head->iProcessId, previous_burst, head->iBurstTime);
         if(!already_running)
         {
             printf(", response time = %ld", response_time);
@@ -169,21 +168,17 @@ void* consume_processes(void* consumer_package)
         }
         pthread_mutex_unlock(consumer->mutex_handle);
         // now delete it.
-        struct process* check = consumer->head;
-        if(consumer->head->oNext == (void*)0)
-            consumer->head = head_cache;
-        else
-            consumer->head = consumer->head->oNext;
-        if(is_finished(check))
+        if(is_finished(head))
         {
-            unsigned int turnaround_time = getDifferenceInMilliSeconds(consumer->head->oTimeCreated, end);
+            unsigned int turnaround_time = getDifferenceInMilliSeconds(head->oTimeCreated, end);
             printf(", turnaround time = %ld", turnaround_time);
+            //printf("\nprocess being killed. process list size = %d\n", list_size(*consumer->head));
             *(consumer->total_turnaround_time) += turnaround_time;
-            remove_process(consumer->mutex_handle, &head_cache, check);
+            remove_process(consumer->mutex_handle, consumer->head, head);
         }
+        head = *consumer->head;
         printf("\n");
     }
-
     pthread_exit(NULL);
     // Kill the thread.
 }
@@ -226,12 +221,12 @@ int main()
     pthread_t creator_thread_handle, consumer_thread_handle;
     struct creator_pack creator;
     creator.mutex_handle = &lock;
-    creator.head = process_head;
+    creator.head = &process_head;
     creator.creating_finished = &create_done;
     pthread_create(&creator_thread_handle, NULL, create_processes, &creator);
     struct consumer_pack consumer;
     consumer.mutex_handle = &lock;
-    consumer.head = process_head;
+    consumer.head = &process_head;
     consumer.tail = process_tail;
     consumer.creating_finished = &create_done;
     consumer.total_response_time = &total_response_time;
