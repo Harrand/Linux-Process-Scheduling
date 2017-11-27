@@ -6,7 +6,7 @@
 #include <assert.h>
 
 /*
-    SJF Bounded (Shortest-Job-First with Bounding Buffer) Implementation of predefined process.
+    SJF Bounded & MC (Shortest-Job-First with Bounding Buffer and Multiple Consumers) Implementation of predefined process.
     Predefined constraints are preprocessor macros in 'coursework.h'
 */
 
