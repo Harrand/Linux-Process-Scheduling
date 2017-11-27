@@ -48,6 +48,7 @@ struct creator_pack
 struct consumer_pack
 {
     pthread_mutex_t* mutex_handle;
+    unsigned int consumer_id;
     // still is the shared data.
     // head is a double ptr because the head position will change alot.
     struct process** head;
@@ -206,7 +207,6 @@ int main()
     // Give me a process. Linked List is currently sorted as contains one element.
     struct process* process_head = generateProcess();
     struct process* process_tail = process_head;
-    unsigned int i;
     // make number of processes we've allocated equal to the macro
     /*
     for(i = 0; i < NUMBER_OF_PROCESSES; i++)
@@ -218,25 +218,34 @@ int main()
     */
     unsigned int create_done = 0;
     pthread_mutex_t lock;
-    pthread_t creator_thread_handle, consumer_thread_handle;
+    // NUMBER_OF_CONSUMERS is a preprocessor macro so is constexpr so can be used as array size.
+    pthread_t creator_thread_handle, consumer_thread_handle[NUMBER_OF_CONSUMERS];
     struct creator_pack creator;
     creator.mutex_handle = &lock;
     creator.head = &process_head;
     creator.creating_finished = &create_done;
     pthread_create(&creator_thread_handle, NULL, create_processes, &creator);
-    struct consumer_pack consumer;
-    consumer.mutex_handle = &lock;
-    consumer.head = &process_head;
-    consumer.tail = process_tail;
-    consumer.creating_finished = &create_done;
-    consumer.total_response_time = &total_response_time;
-    consumer.total_turnaround_time = &total_turnaround_time;
-    pthread_create(&consumer_thread_handle, NULL, consume_processes, &consumer);
+    // Create consumer packs on main thread.
+    struct consumer_pack consumer[NUMBER_OF_CONSUMERS];
+    unsigned int i = 0;
+    for(i = 0; i < NUMBER_OF_CONSUMERS; i++)
+    {
+        consumer[i].mutex_handle = &lock;
+        consumer[i].consumer_id = i;
+        consumer[i].head = &process_head;
+        consumer[i].tail = process_tail;
+        consumer[i].creating_finished = &create_done;
+        consumer[i].total_response_time = &total_response_time;
+        consumer[i].total_turnaround_time = &total_turnaround_time;
+        pthread_create(&consumer_thread_handle[i], NULL, consume_processes, &consumer[i]);
+        printf("Consumer being created with id %d.\n", consumer[i].consumer_id);
+    }
     // Creator thread separate. Consumption thread unnecessary as that will be done in the main thread.
     // The reason I do not create another thread for consumption as the main thread will just wait for it anyway so might aswell use it.
 
     pthread_join(creator_thread_handle, NULL);
-    pthread_join(consumer_thread_handle, NULL);
+    for(i = 0; i < NUMBER_OF_CONSUMERS; i++)
+        pthread_join(consumer_thread_handle[i], NULL);
     printf("Done. Average Response Time = %ldms, Average Turnaround Time = %ldms\n", total_response_time / NUMBER_OF_PROCESSES, total_turnaround_time / NUMBER_OF_PROCESSES);
     return 0;
 }
