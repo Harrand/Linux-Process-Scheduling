@@ -66,7 +66,7 @@ void remove_process(struct process** head, struct process* to_remove)
     if(process_head == to_remove)
     {
         struct process* tmp = process_head;
-        head = &process_head->oNext;
+        *head = process_head->oNext;
         free(process_head);
     }
     while(process_head->oNext != (void*)0)
