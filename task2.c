@@ -177,13 +177,14 @@ void* consume_processes(void* consumer_package)
     // when this begins, we will have definitely at least one process in the linked list. apart from that, everything is off the cards.
     // we must not process and finish the last process (head) though until more are made or no more are being made and we're about to finish up.
     // the reason for this is that there will be a dangling head ptr which will segfault when the other thread tries to add another process after it.
-    while(*(consumer->creating_finished) == 0 || list_size(head) > 0)
+    while(*(consumer->creating_finished) == 0 || list_size(head) > 0) // while consumer is still creating or the head is not empty. so stops when not creating anymore and head is empty.
     {
         // tasks are still on their way and we need to be ready for them too.
         // just make sure we dont complete the last task.
         // we cant hack through this though, we do first come first serve. this is why we need the tail i.e never process tail until the loop is ending.
         if(list_size(head) <= 1 && (*consumer->creating_finished) == 0)
         {
+            // skip if list size is 1 or less and we're still creating and thus we need to wait.
             //printf("list size is 1 or less, waiting for more...\n");
             //sleep(1);
             continue;
