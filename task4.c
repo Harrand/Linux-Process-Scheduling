@@ -6,7 +6,7 @@
 #include <assert.h>
 
 /*
-    RR Bounded (Round Robin with Bounding Buffer) Implementation of predefined process.
+    RR Bounded & MC (Shortest-Job-First with Bounding Buffer and Multiple Consumers) Implementation of predefined process.
     Predefined constraints are preprocessor macros in 'coursework.h'
 */
 
@@ -29,6 +29,29 @@ size_t list_size(struct process* head)
         head = head->oNext;
     }
     return size;
+}
+
+int is_locked(pthread_mutex_t* mutex)
+{
+    int ret = 1;
+    if(pthread_mutex_trylock(mutex) == 0)
+    {
+       // successfully locked, i.e the mutex was not locked beforehand.
+       ret = 0;
+       pthread_mutex_unlock(mutex);
+    }
+    return ret;
+}
+
+void print_list(struct process* head)
+{
+    struct process* iter = head;
+    int i;
+    for(i = 0; i < list_size(head); i++)
+    {
+        printf("[%d] pid = %d\n", i, iter->iProcessId);
+        iter = iter->oNext;
+    }
 }
 
 /* pthread functionality requires that all functions ran on a separate thread must return void* and take a single void* parameter.
@@ -73,6 +96,56 @@ void add_process(pthread_mutex_t* lock, struct process** head, struct process* a
     head_cpy->oNext = a_process;
     pthread_mutex_unlock(lock);
 }
+/*
+// SJF. edits the list so MUST be mutex locked.
+void add_process(pthread_mutex_t* lock, struct process** head, struct process* a_process)
+{
+    pthread_mutex_lock(lock);
+    struct process* process_head = *head;
+    if(a_process->iBurstTime < process_head->iBurstTime)
+    {
+        swap(head, &a_process);
+        (*head)->oNext = a_process;
+        pthread_mutex_unlock(lock);
+        return;
+    }
+    struct process* iter = process_head;
+    while(iter->iBurstTime < a_process->iBurstTime)
+    {
+        // (void*)0 is basically exactly what the macro NULL does. Using it like this as NULL confuses me when it's just referring to memloc 0, not necessarily a nullptr
+        if(iter->oNext == (void*)0)
+        {
+            // at the end of the linked list, so this is the longest burst time so far, so make it the tail
+            iter->oNext = a_process;
+            break;
+        }
+        if(iter->oNext->iBurstTime > a_process->iBurstTime)
+        {
+            // needs to be inserted between iter and iter next
+            struct process* tmp = iter->oNext;
+            iter->oNext = a_process;
+            a_process->oNext = tmp;
+        }
+        iter = iter->oNext;
+    }
+    pthread_mutex_unlock(lock);
+}
+*/
+/*
+void add_process(pthread_mutex_t* lock, struct process** head, struct process* a_process)
+{
+    pthread_mutex_lock(lock);
+    struct process* head_cpy = *head;
+    if(head_cpy == (void*)0)
+        *head = a_process;
+    while(head_cpy->oNext != (void*)0)
+    {
+        head_cpy = head_cpy->oNext;
+    }
+    head_cpy->oNext = a_process;
+    pthread_mutex_unlock(lock);
+}
+*/
 
 // Must be ran on a creator package where the process head is just one element.
 void* create_processes(void* creator_package)
@@ -88,14 +161,17 @@ void* create_processes(void* creator_package)
         {
             // we have space to generate a new process, so do so.
             struct process* new_process = generateProcess();
+            printf("Adding process...\n");
             add_process(creator->mutex_handle, creator->head, new_process);
             processes_created++;
-            printf("Adding process to end of the list. Created %d/%d in total.\n", processes_created, NUMBER_OF_PROCESSES);
+            printf("Added process (size now %d). Created %d/%d in total.\n", list_size(*creator->head), processes_created, NUMBER_OF_PROCESSES);
         }
         else
         {
             // we arent allowed to generate a new process. the mutex is not locked so we wait, i.e do nothing and sleep.
-            //printf("Buffer Size exceeded, list size = %d, waiting...\n", list_size(*creator->head));
+            printf("Buffer Size exceeded, list size = %d, waiting...\n", list_size(*creator->head));
+            printf("list ids in order:\n");
+            print_list(*creator->head);
             //sleep(1);
         }
     }
@@ -110,24 +186,42 @@ void* create_processes(void* creator_package)
 // Take double pointer to head remains true. edits the list so MUST be locked!
 void remove_process(pthread_mutex_t* lock, struct process** head, struct process* to_remove)
 {
+    printf("waiting to remove process...\n");
     pthread_mutex_lock(lock);
     struct process* process_head = *head;
     if(process_head == (void*)0)
+    {
+        pthread_mutex_unlock(lock);
+        printf("the head is NULL, cant remove process.\n");
         return;
+    }
     if(process_head == to_remove)
     {
         struct process* tmp = process_head;
         *head = process_head->oNext;
+        printf("freeing at head.\n");
         free(process_head);
+        printf("freed at head.\n");
+        print_list(*head);
+        pthread_mutex_unlock(lock);
+        return;
     }
-    while(process_head->oNext != (void*)0)
+    struct process* previous = process_head;
+    while(process_head != (void*)0)
     {
-        if(process_head->oNext == to_remove)
+        if(process_head == to_remove)
         {
-            if(to_remove->oNext != (void*)0)
-                process_head->oNext = to_remove->oNext;
+            if(to_remove != (void*)0)
+                process_head = to_remove;
+            previous->oNext = process_head->oNext;
+            printf("freeing.\n");
             free(to_remove);
+            printf("freed.\n");
+            print_list(*head);
+            pthread_mutex_unlock(lock);
+            return;
         }
+        previous = process_head;
         process_head = process_head->oNext;
     }
     pthread_mutex_unlock(lock);
@@ -136,49 +230,70 @@ void remove_process(pthread_mutex_t* lock, struct process** head, struct process
 void* consume_processes(void* consumer_package)
 {
     struct consumer_pack* consumer = (struct consumer_pack*) consumer_package;
-    //struct process* head_cache = consumer->head;
-    struct process* head = *consumer->head;
-    // when this begins, we will have definitely at least one process in the linked list. apart from that, everything is off the cards.
-    // we must not process and finish the last process (head) though until more are made or no more are being made and we're about to finish up.
-    // the reason for this is that there will be a dangling head ptr which will segfault when the other thread tries to add another process after it.
-    while(*(consumer->creating_finished) == 0 || list_size(head) > 0)
+    const unsigned int cid = consumer->consumer_id;
+    unsigned int i;
+    // because multiple consumers, we dont want to ever actually lock the mutex, just check if its already locked by the creator and sleep if it is.
+    while(*(consumer->creating_finished) == 0 || list_size(*consumer->head) > 0) // thread does not die until we're no longer creating more and the list is completely empty.
     {
-        // tasks are still on their way and we need to be ready for them too.
-        // just make sure we dont complete the last task.
-        // we cant hack through this though, we do first come first serve. this is why we need the tail i.e never process tail until the loop is ending.
-        if(list_size(head) <= 1 && (*consumer->creating_finished) == 0)
+        // if were not done and we have one more, do not kill the last one
+        // but if we are done and have one more, than we can kill the last one
+        if(*(consumer->creating_finished) == 0 && list_size(*consumer->head) <= 1)
         {
-            //printf("list size is 1 or less, waiting for more...\n");
+            //printf("list size is 1 or less, waiting...\n");
+            //printf("creation finished = %d, list_size = %d\n", *(consumer->creating_finished), list_size(*consumer->head));
             //sleep(1);
             continue;
         }
-        pthread_mutex_lock(consumer->mutex_handle);
-        // perform processing
+        struct process* begin = *consumer->head;
+        int is_ready = 1;
+        for(i = 0; i < cid; i++)
+        {
+            if(list_size(*consumer->head) == 0 || begin->oNext == NULL)
+                is_ready = 0;
+            else
+                begin = begin->oNext;
+        }
+        // move begin to cid position in the list. so if cid = 1, cid is the 1st (not 0th) element of the linked list.
+        if(is_ready == 0)
+        {
+            //printf("cid %d not ready to process... list size = %d\n", cid, list_size(*consumer->head));
+            //sleep(1);
+            continue;
+        }
+        if(is_locked(consumer->mutex_handle))
+        {
+            // wait if creation is happening right now or list size is too small.
+            // currently creating more. dont do anything.
+            continue;
+        }
+        // no creation is taking place by now, the list size is fair and our element in the list is valid.
+        //pthread_mutex_lock(consumer->mutex_handle);
+        //printf("cid = %d, head pid = %d, pid to kill = %d\n", cid, (*consumer->head)->iProcessId, begin->iProcessId);
         struct timeval start, end;
-        int previous_burst = head->iBurstTime;
+        int previous_burst = begin->iBurstTime;
         int already_running = 0;
-        if(head->iState == RUNNING || head->iState == READY)
+        if(begin->iState == RUNNING || begin->iState == READY)
             already_running = 1;
-        simulateRoundRobinProcess(head, &start, &end);
-        unsigned int response_time = getDifferenceInMilliSeconds(head->oTimeCreated, start);
-        printf("pid = %d, previous burst = %d, new burst = %d", head->iProcessId, previous_burst, head->iBurstTime);
+        simulateRoundRobinProcess(begin, &start, &end);
+        unsigned int response_time = getDifferenceInMilliSeconds(begin->oTimeCreated, start);
+        printf("pid = %d, previous burst = %d, new burst = %d", begin->iProcessId, previous_burst, begin->iBurstTime);
         if(!already_running)
         {
             printf(", response time = %ld", response_time);
             *(consumer->total_response_time) += response_time;
         }
-        pthread_mutex_unlock(consumer->mutex_handle);
         // now delete it.
-        if(is_finished(head))
+        if(is_finished(begin))
         {
-            unsigned int turnaround_time = getDifferenceInMilliSeconds(head->oTimeCreated, end);
+            unsigned int turnaround_time = getDifferenceInMilliSeconds(begin->oTimeCreated, end);
             printf(", turnaround time = %ld", turnaround_time);
             //printf("\nprocess being killed. process list size = %d\n", list_size(*consumer->head));
             *(consumer->total_turnaround_time) += turnaround_time;
-            remove_process(consumer->mutex_handle, consumer->head, head);
+            remove_process(consumer->mutex_handle, consumer->head, begin);
         }
-        head = *consumer->head;
-        printf("\n");
+        //printf("finished removing process.\n");
+        //printf("list size = %d, done = %d\n", list_size(*consumer->head), *(consumer->creating_finished));
+        //pthread_mutex_unlock(consumer->mutex_handle);
     }
     pthread_exit(NULL);
     // Kill the thread.
@@ -207,6 +322,7 @@ int main()
     // Give me a process. Linked List is currently sorted as contains one element.
     struct process* process_head = generateProcess();
     struct process* process_tail = process_head;
+    unsigned int i;
     // make number of processes we've allocated equal to the macro
     /*
     for(i = 0; i < NUMBER_OF_PROCESSES; i++)
@@ -218,16 +334,13 @@ int main()
     */
     unsigned int create_done = 0;
     pthread_mutex_t lock;
-    // NUMBER_OF_CONSUMERS is a preprocessor macro so is constexpr so can be used as array size.
     pthread_t creator_thread_handle, consumer_thread_handle[NUMBER_OF_CONSUMERS];
     struct creator_pack creator;
     creator.mutex_handle = &lock;
     creator.head = &process_head;
     creator.creating_finished = &create_done;
     pthread_create(&creator_thread_handle, NULL, create_processes, &creator);
-    // Create consumer packs on main thread.
     struct consumer_pack consumer[NUMBER_OF_CONSUMERS];
-    unsigned int i = 0;
     for(i = 0; i < NUMBER_OF_CONSUMERS; i++)
     {
         consumer[i].mutex_handle = &lock;
@@ -238,14 +351,17 @@ int main()
         consumer[i].total_response_time = &total_response_time;
         consumer[i].total_turnaround_time = &total_turnaround_time;
         pthread_create(&consumer_thread_handle[i], NULL, consume_processes, &consumer[i]);
-        printf("Consumer being created with id %d.\n", consumer[i].consumer_id);
     }
     // Creator thread separate. Consumption thread unnecessary as that will be done in the main thread.
     // The reason I do not create another thread for consumption as the main thread will just wait for it anyway so might aswell use it.
 
     pthread_join(creator_thread_handle, NULL);
+    printf("creator thread joined.\n");
     for(i = 0; i < NUMBER_OF_CONSUMERS; i++)
+    {
         pthread_join(consumer_thread_handle[i], NULL);
+        printf("consumer thread joined.\n");
+    }
     printf("Done. Average Response Time = %ldms, Average Turnaround Time = %ldms\n", total_response_time / NUMBER_OF_PROCESSES, total_turnaround_time / NUMBER_OF_PROCESSES);
     return 0;
 }
