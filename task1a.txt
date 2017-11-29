@@ -1,0 +1,11 @@
+process id = 3, previous burst = 16, new burst = 0, response time = 0, turn around time = 16
+process id = 9, previous burst = 22, new burst = 0, response time = 16, turn around time = 38
+process id = 5, previous burst = 36, new burst = 0, response time = 38, turn around time = 74
+process id = 8, previous burst = 50, new burst = 0, response time = 74, turn around time = 124
+process id = 10, previous burst = 63, new burst = 0, response time = 124, turn around time = 187
+process id = 2, previous burst = 78, new burst = 0, response time = 187, turn around time = 265
+process id = 0, previous burst = 84, new burst = 0, response time = 265, turn around time = 349
+process id = 1, previous burst = 87, new burst = 0, response time = 349, turn around time = 436
+process id = 7, previous burst = 93, new burst = 0, response time = 436, turn around time = 529
+process id = 4, previous burst = 94, new burst = 0, response time = 529, turn around time = 623
+Average Response Time = 201ms, Average Turnaround Time = 264ms

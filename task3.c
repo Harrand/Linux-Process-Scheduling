@@ -43,6 +43,7 @@ int is_locked(pthread_mutex_t* mutex)
     return ret;
 }
 
+// helper function to aid during development.
 void print_list(struct process* head)
 {
     struct process* iter = head;
@@ -145,18 +146,10 @@ void* create_processes(void* creator_package)
         {
             // we have space to generate a new process, so do so.
             struct process* new_process = generateProcess();
-            printf("Adding process...\n");
+            //printf("Adding process...\n");
             add_process(creator->mutex_handle, creator->head, new_process);
             processes_created++;
-            printf("Added process (size now %d). Created %d/%d in total.\n", list_size(*creator->head), processes_created, NUMBER_OF_PROCESSES);
-        }
-        else
-        {
-            // we arent allowed to generate a new process. the mutex is not locked so we wait, i.e do nothing and sleep.
-            printf("Buffer Size exceeded, list size = %d, waiting...\n", list_size(*creator->head));
-            printf("list ids in order:\n");
-            print_list(*creator->head);
-            //sleep(1);
+            //printf("Added process (size now %d). Created %d/%d in total.\n", list_size(*creator->head), processes_created, NUMBER_OF_PROCESSES);
         }
     }
     pthread_mutex_lock(creator->mutex_handle);
@@ -170,23 +163,19 @@ void* create_processes(void* creator_package)
 // Take double pointer to head remains true. edits the list so MUST be locked!
 void remove_process(pthread_mutex_t* lock, struct process** head, struct process* to_remove)
 {
-    printf("waiting to remove process...\n");
     pthread_mutex_lock(lock);
     struct process* process_head = *head;
     if(process_head == (void*)0)
     {
         pthread_mutex_unlock(lock);
-        printf("the head is NULL, cant remove process.\n");
         return;
     }
     if(process_head == to_remove)
     {
         struct process* tmp = process_head;
         *head = process_head->oNext;
-        printf("freeing at head.\n");
         free(process_head);
-        printf("freed at head.\n");
-        print_list(*head);
+        //print_list(*head);
         pthread_mutex_unlock(lock);
         return;
     }
@@ -198,10 +187,8 @@ void remove_process(pthread_mutex_t* lock, struct process** head, struct process
             if(to_remove != (void*)0)
                 process_head = to_remove;
             previous->oNext = process_head->oNext;
-            printf("freeing.\n");
             free(to_remove);
-            printf("freed.\n");
-            print_list(*head);
+            //print_list(*head);
             pthread_mutex_unlock(lock);
             return;
         }
@@ -332,11 +319,11 @@ int main()
     // The reason I do not create another thread for consumption as the main thread will just wait for it anyway so might aswell use it.
 
     pthread_join(creator_thread_handle, NULL);
-    printf("creator thread joined.\n");
+    //printf("creator thread joined.\n");
     for(i = 0; i < NUMBER_OF_CONSUMERS; i++)
     {
         pthread_join(consumer_thread_handle[i], NULL);
-        printf("consumer thread joined.\n");
+        //printf("consumer thread joined.\n");
     }
     printf("Done. Average Response Time = %ldms, Average Turnaround Time = %ldms\n", total_response_time / NUMBER_OF_PROCESSES, total_turnaround_time / NUMBER_OF_PROCESSES);
     return 0;

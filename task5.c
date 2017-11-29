@@ -68,12 +68,6 @@ struct creator_pack
     unsigned int* creating_finished;
 };
 
-struct event_manager_pack
-{
-    struct process* blocked_head;
-    int should_stop;
-};
-
 struct consumer_pack
 {
     pthread_mutex_t* mutex_handle;
@@ -86,63 +80,11 @@ struct consumer_pack
     // Want to access the totals values to edit them with any consumption of processes performed.
     unsigned int* total_response_time;
     unsigned int* total_turnaround_time;
-    struct event_manager_pack* event_manager;
 };
 
 // RR, add the process to the end of the list. edits the list so MUST be mutex locked.
 void add_process(pthread_mutex_t* lock, struct process** head, struct process* a_process)
 {
-    if(lock != NULL)
-        pthread_mutex_lock(lock);
-    struct process* head_cpy = *head;
-    if(head_cpy == (void*)0)
-        *head = a_process;
-    while(head_cpy->oNext != (void*)0)
-    {
-        head_cpy = head_cpy->oNext;
-    }
-    head_cpy->oNext = a_process;
-    if(lock != NULL)
-        pthread_mutex_unlock(lock);
-}
-/*
-// SJF. edits the list so MUST be mutex locked.
-void add_process(pthread_mutex_t* lock, struct process** head, struct process* a_process)
-{
-    pthread_mutex_lock(lock);
-    struct process* process_head = *head;
-    if(a_process->iBurstTime < process_head->iBurstTime)
-    {
-        swap(head, &a_process);
-        (*head)->oNext = a_process;
-        pthread_mutex_unlock(lock);
-        return;
-    }
-    struct process* iter = process_head;
-    while(iter->iBurstTime < a_process->iBurstTime)
-    {
-        // (void*)0 is basically exactly what the macro NULL does. Using it like this as NULL confuses me when it's just referring to memloc 0, not necessarily a nullptr
-        if(iter->oNext == (void*)0)
-        {
-            // at the end of the linked list, so this is the longest burst time so far, so make it the tail
-            iter->oNext = a_process;
-            break;
-        }
-        if(iter->oNext->iBurstTime > a_process->iBurstTime)
-        {
-            // needs to be inserted between iter and iter next
-            struct process* tmp = iter->oNext;
-            iter->oNext = a_process;
-            a_process->oNext = tmp;
-        }
-        iter = iter->oNext;
-    }
-    pthread_mutex_unlock(lock);
-}
-*/
-/*
-void add_process(pthread_mutex_t* lock, struct process** head, struct process* a_process)
-{
     pthread_mutex_lock(lock);
     struct process* head_cpy = *head;
     if(head_cpy == (void*)0)
@@ -154,7 +96,6 @@ void add_process(pthread_mutex_t* lock, struct process** head, struct process* a
     head_cpy->oNext = a_process;
     pthread_mutex_unlock(lock);
 }
-*/
 
 // Must be ran on a creator package where the process head is just one element.
 void* create_processes(void* creator_package)
@@ -170,18 +111,8 @@ void* create_processes(void* creator_package)
         {
             // we have space to generate a new process, so do so.
             struct process* new_process = generateProcess();
-            printf("Adding process...\n");
             add_process(creator->mutex_handle, creator->head, new_process);
             processes_created++;
-            printf("Added process (size now %d). Created %d/%d in total.\n", list_size(*creator->head), processes_created, NUMBER_OF_PROCESSES);
-        }
-        else
-        {
-            // we arent allowed to generate a new process. the mutex is not locked so we wait, i.e do nothing and sleep.
-            printf("Buffer Size exceeded, list size = %d, waiting...\n", list_size(*creator->head));
-            printf("list ids in order:\n");
-            print_list(*creator->head);
-            //sleep(1);
         }
     }
     pthread_mutex_lock(creator->mutex_handle);
@@ -195,27 +126,20 @@ void* create_processes(void* creator_package)
 // Take double pointer to head remains true. edits the list so MUST be locked!
 void remove_process(pthread_mutex_t* lock, struct process** head, struct process* to_remove)
 {
-    printf("waiting to remove process...\n");
-    if(lock != NULL)
-        pthread_mutex_lock(lock);
+    pthread_mutex_lock(lock);
     struct process* process_head = *head;
     if(process_head == (void*)0)
     {
-        if(lock != NULL)
-            pthread_mutex_unlock(lock);
-        printf("the head is NULL, cant remove process.\n");
+        pthread_mutex_unlock(lock);
         return;
     }
     if(process_head == to_remove)
     {
         struct process* tmp = process_head;
         *head = process_head->oNext;
-        printf("freeing at head.\n");
         free(process_head);
-        printf("freed at head.\n");
-        print_list(*head);
-        if(lock != NULL)
-            pthread_mutex_unlock(lock);
+        //print_list(*head);
+        pthread_mutex_unlock(lock);
         return;
     }
     struct process* previous = process_head;
@@ -226,19 +150,15 @@ void remove_process(pthread_mutex_t* lock, struct process** head, struct process
             if(to_remove != (void*)0)
                 process_head = to_remove;
             previous->oNext = process_head->oNext;
-            printf("freeing.\n");
             free(to_remove);
-            printf("freed.\n");
-            print_list(*head);
-            if(lock != NULL)
-                pthread_mutex_unlock(lock);
+            //print_list(*head);
+            pthread_mutex_unlock(lock);
             return;
         }
         previous = process_head;
         process_head = process_head->oNext;
     }
-    if(lock != NULL)
-        pthread_mutex_unlock(lock);
+    pthread_mutex_unlock(lock);
 }
 
 void* consume_processes(void* consumer_package)
@@ -280,10 +200,6 @@ void* consume_processes(void* consumer_package)
             // currently creating more. dont do anything.
             continue;
         }
-        if(begin->iState == BLOCKED)
-        {
-            continue;
-        }
         // no creation is taking place by now, the list size is fair and our element in the list is valid.
         //pthread_mutex_lock(consumer->mutex_handle);
         //printf("cid = %d, head pid = %d, pid to kill = %d\n", cid, (*consumer->head)->iProcessId, begin->iProcessId);
@@ -292,14 +208,7 @@ void* consume_processes(void* consumer_package)
         int already_running = 0;
         if(begin->iState == RUNNING || begin->iState == READY)
             already_running = 1;
-        simulateBlockingRoundRobinProcess(begin, &start, &end);
-        if(begin->iState == BLOCKED)
-        {
-            // was just blocked.
-            printf("adding blocked process pid %d to event manager.\n", begin->iProcessId);
-            add_process(NULL, &consumer->event_manager->blocked_head, begin);
-            printf("added.\n");
-        }
+        simulateRoundRobinProcess(begin, &start, &end);
         unsigned int response_time = getDifferenceInMilliSeconds(begin->oTimeCreated, start);
         printf("pid = %d, previous burst = %d, new burst = %d", begin->iProcessId, previous_burst, begin->iBurstTime);
         if(!already_running)
@@ -316,31 +225,13 @@ void* consume_processes(void* consumer_package)
             *(consumer->total_turnaround_time) += turnaround_time;
             remove_process(consumer->mutex_handle, consumer->head, begin);
         }
+        printf("\n");
         //printf("finished removing process.\n");
         //printf("list size = %d, done = %d\n", list_size(*consumer->head), *(consumer->creating_finished));
         //pthread_mutex_unlock(consumer->mutex_handle);
     }
-    consumer->event_manager->should_stop = 1;
     pthread_exit(NULL);
     // Kill the thread.
-}
-
-
-void* block_manager(void* event_manager_package)
-{
-    struct event_manager_pack* evt_mgr = (struct event_manager_pack*) event_manager_package;
-    const size_t wait_time_micro = 20000;
-    printf("BOBS AND VAGENE.\n");
-    while(evt_mgr->should_stop == 0)
-    {
-        struct process* to_unblock = evt_mgr->blocked_head;
-        to_unblock->iState = RUNNING;
-        printf("unblocking process pid %d\n", to_unblock->iProcessId);
-        remove_process(NULL, &evt_mgr->blocked_head, to_unblock);
-        printf("unblocked process pid %d\n", to_unblock->iProcessId);
-        usleep(wait_time_micro);
-    }
-    pthread_exit(NULL);
 }
 
 int is_finished(struct process* a_process)
@@ -378,16 +269,12 @@ int main()
     */
     unsigned int create_done = 0;
     pthread_mutex_t lock;
-    pthread_t creator_thread_handle, consumer_thread_handle[NUMBER_OF_CONSUMERS], event_manager_thread_handle;
+    pthread_t creator_thread_handle, consumer_thread_handle[NUMBER_OF_CONSUMERS];
     struct creator_pack creator;
     creator.mutex_handle = &lock;
     creator.head = &process_head;
     creator.creating_finished = &create_done;
     pthread_create(&creator_thread_handle, NULL, create_processes, &creator);
-    struct event_manager_pack event_manager;
-    event_manager.blocked_head = NULL;
-    event_manager.should_stop = 0;
-    //pthread_create(&event_manager_thread_handle, NULL, block_manager, &event_manager);
     struct consumer_pack consumer[NUMBER_OF_CONSUMERS];
     for(i = 0; i < NUMBER_OF_CONSUMERS; i++)
     {
@@ -398,18 +285,17 @@ int main()
         consumer[i].creating_finished = &create_done;
         consumer[i].total_response_time = &total_response_time;
         consumer[i].total_turnaround_time = &total_turnaround_time;
-        consumer[i].event_manager = &event_manager;
         pthread_create(&consumer_thread_handle[i], NULL, consume_processes, &consumer[i]);
     }
+    // Creator thread separate. Consumption thread unnecessary as that will be done in the main thread.
+    // The reason I do not create another thread for consumption as the main thread will just wait for it anyway so might aswell use it.
 
     pthread_join(creator_thread_handle, NULL);
-    printf("creator thread joined.\n");
-    pthread_join(event_manager_thread_handle, NULL);
-    printf("event manager thread joined.\n");
+    //printf("creator thread joined.\n");
     for(i = 0; i < NUMBER_OF_CONSUMERS; i++)
     {
         pthread_join(consumer_thread_handle[i], NULL);
-        printf("consumer thread joined.\n");
+        //printf("consumer thread joined.\n");
     }
     printf("Done. Average Response Time = %ldms, Average Turnaround Time = %ldms\n", total_response_time / NUMBER_OF_PROCESSES, total_turnaround_time / NUMBER_OF_PROCESSES);
     return 0;

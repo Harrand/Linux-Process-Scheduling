@@ -1,0 +1,19 @@
+pid = 0, previous burst = 84, new burst = 34, response time = 0
+pid = 1, previous burst = 87, new burst = 37, response time = 50
+pid = 2, previous burst = 78, new burst = 28, response time = 100
+pid = 3, previous burst = 16, new burst = 0, response time = 150, turnaround time = 166
+pid = 4, previous burst = 94, new burst = 44, response time = 166
+pid = 5, previous burst = 36, new burst = 0, response time = 216, turnaround time = 252
+pid = 6, previous burst = 87, new burst = 37, response time = 252
+pid = 7, previous burst = 93, new burst = 43, response time = 302
+pid = 8, previous burst = 50, new burst = 0, response time = 352, turnaround time = 402
+pid = 9, previous burst = 22, new burst = 0, response time = 402, turnaround time = 424
+pid = 10, previous burst = 63, new burst = 13, response time = 424
+pid = 0, previous burst = 34, new burst = 0, turnaround time = 508
+pid = 1, previous burst = 37, new burst = 0, turnaround time = 545
+pid = 2, previous burst = 28, new burst = 0, turnaround time = 573
+pid = 4, previous burst = 44, new burst = 0, turnaround time = 617
+pid = 6, previous burst = 37, new burst = 0, turnaround time = 654
+pid = 7, previous burst = 43, new burst = 0, turnaround time = 697
+pid = 10, previous burst = 13, new burst = 0, turnaround time = 710
+Done. Average Response Time = 241ms, Average Turnaround Time = 554ms

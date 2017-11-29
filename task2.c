@@ -121,9 +121,10 @@ void* create_processes(void* creator_package)
         {
             // we have space to generate a new process, so do so.
             struct process* new_process = generateProcess();
+            printf("adding new process...\n");
             add_process(creator->mutex_handle, creator->head, new_process);
             processes_created++;
-            printf("Adding process to end of the list. Created %d/%d in total.\n", processes_created, NUMBER_OF_PROCESSES);
+            printf("Added process to end of the list. Created %d/%d in total.\n", processes_created, NUMBER_OF_PROCESSES);
         }
         else
         {
@@ -132,9 +133,9 @@ void* create_processes(void* creator_package)
             //sleep(1);
         }
     }
-    pthread_mutex_lock(creator->mutex_handle);
+    //pthread_mutex_lock(creator->mutex_handle);
     *(creator->creating_finished) = 1;
-    pthread_mutex_unlock(creator->mutex_handle);
+    //pthread_mutex_unlock(creator->mutex_handle);
     // Make the bool true so the other thread can safely read. Shouldn't need to mutex this.
     pthread_exit(NULL);
     // Kill the thread. We're done creating processes.
