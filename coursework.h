@@ -4,7 +4,7 @@
 #define TIME_SLICE 5
 
 // Number of processes to create
-#define NUMBER_OF_PROCESSES 1000
+#define NUMBER_OF_PROCESSES 10
 
 // size of the bounded buffer for task 2 onwards
 #define BUFFER_SIZE 5

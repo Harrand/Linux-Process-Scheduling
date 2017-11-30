@@ -68,13 +68,6 @@ struct creator_pack
     unsigned int* creating_finished;
 };
 
-struct event_manager_pack
-{
-    pthread_mutex_t* mutex_handle;
-    struct process** head;
-    
-};
-
 struct consumer_pack
 {
     pthread_mutex_t* mutex_handle;
@@ -215,18 +208,9 @@ void* consume_processes(void* consumer_package)
         int already_running = 0;
         if(begin->iState == RUNNING || begin->iState == READY)
             already_running = 1;
-        if(begin->iState == BLOCKED)
-        {
-            //printf("is blocked, not running.\n");
-            continue;
-        }
         simulateBlockingRoundRobinProcess(begin, &start, &end);
         unsigned int response_time = getDifferenceInMilliSeconds(begin->oTimeCreated, start);
         printf("pid = %d, previous burst = %d, new burst = %d", begin->iProcessId, previous_burst, begin->iBurstTime);
-        if(begin->iState == BLOCKED)
-        {
-            // the process has JUST been blocked.
-        }
         if(!already_running)
         {
             printf(", response time = %ld", response_time);

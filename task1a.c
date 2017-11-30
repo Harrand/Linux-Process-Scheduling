@@ -89,18 +89,19 @@ int main()
     struct process* process_head = generateProcess();
     unsigned int i;
     // make number of processes we've allocated equal to the macro
-    for(i = 0; i < NUMBER_OF_PROCESSES; i++)
+    for(i = 0; i < NUMBER_OF_PROCESSES - 1; i++)
     {
         struct process* a_process = generateProcess();
         add_process(&process_head, a_process);
     }
 
+    struct process* head_cpy = process_head;
     struct process* tmp;
     // iterate through the list, running each element just before freeing it. follows RAII, a cpp practice and is efficient.
-    while (process_head != (void*)0)
+    while (head_cpy != (void*)0)
     {
-         tmp = process_head;
-         process_head = process_head->oNext;
+         tmp = head_cpy;
+         head_cpy = head_cpy->oNext;
          struct timeval start, end;
          int previous_burst = tmp->iBurstTime;
          simulateSJFProcess(tmp, &start, &end);
