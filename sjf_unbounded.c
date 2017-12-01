@@ -1,10 +1,10 @@
-#include "coursework.h"
+#include "posix_utility.h"
 #include <stdio.h>
 #include <stdlib.h>
 
 /*
     SJF (Shortest-Job-First) Implementation of predefined process.
-    Predefined constraints are preprocessor macros in 'coursework.h'
+    Predefined constraints are preprocessor macros in 'posix_utility.h'
 */
 
 // Using this as a helper function

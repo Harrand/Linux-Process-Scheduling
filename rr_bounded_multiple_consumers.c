@@ -1,4 +1,4 @@
-#include "coursework.h"
+#include "posix_utility.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -6,8 +6,8 @@
 #include <assert.h>
 
 /*
-    SJF Bounded & MC (Shortest-Job-First with Bounding Buffer and Multiple Consumers) Implementation of predefined process.
-    Predefined constraints are preprocessor macros in 'coursework.h'
+    RR Bounded & MC (Shortest-Job-First with Bounding Buffer and Multiple Consumers) Implementation of predefined process.
+    Predefined constraints are preprocessor macros in 'posix_utility.h'
 */
 
 // Using this as a helper function
@@ -43,7 +43,6 @@ int is_locked(pthread_mutex_t* mutex)
     return ret;
 }
 
-// helper function to aid during development.
 void print_list(struct process* head)
 {
     struct process* iter = head;
@@ -83,40 +82,7 @@ struct consumer_pack
     unsigned int* total_turnaround_time;
 };
 
-// SJF. edits the list so MUST be mutex locked.
-void add_process(pthread_mutex_t* lock, struct process** head, struct process* a_process)
-{
-    pthread_mutex_lock(lock);
-    struct process* process_head = *head;
-    if(a_process->iBurstTime < process_head->iBurstTime)
-    {
-        swap(head, &a_process);
-        (*head)->oNext = a_process;
-        pthread_mutex_unlock(lock);
-        return;
-    }
-    struct process* iter = process_head;
-    while(iter->iBurstTime < a_process->iBurstTime)
-    {
-        // (void*)0 is basically exactly what the macro NULL does. Using it like this as NULL confuses me when it's just referring to memloc 0, not necessarily a nullptr
-        if(iter->oNext == (void*)0)
-        {
-            // at the end of the linked list, so this is the longest burst time so far, so make it the tail
-            iter->oNext = a_process;
-            break;
-        }
-        if(iter->oNext->iBurstTime > a_process->iBurstTime)
-        {
-            // needs to be inserted between iter and iter next
-            struct process* tmp = iter->oNext;
-            iter->oNext = a_process;
-            a_process->oNext = tmp;
-        }
-        iter = iter->oNext;
-    }
-    pthread_mutex_unlock(lock);
-}
-/*
+// RR, add the process to the end of the list. edits the list so MUST be mutex locked.
 void add_process(pthread_mutex_t* lock, struct process** head, struct process* a_process)
 {
     pthread_mutex_lock(lock);
@@ -130,7 +96,6 @@ void add_process(pthread_mutex_t* lock, struct process** head, struct process* a
     head_cpy->oNext = a_process;
     pthread_mutex_unlock(lock);
 }
-*/
 
 // Must be ran on a creator package where the process head is just one element.
 void* create_processes(void* creator_package)
@@ -146,10 +111,8 @@ void* create_processes(void* creator_package)
         {
             // we have space to generate a new process, so do so.
             struct process* new_process = generateProcess();
-            //printf("Adding process...\n");
             add_process(creator->mutex_handle, creator->head, new_process);
             processes_created++;
-            //printf("Added process (size now %d). Created %d/%d in total.\n", list_size(*creator->head), processes_created, NUMBER_OF_PROCESSES);
         }
     }
     pthread_mutex_lock(creator->mutex_handle);
@@ -242,18 +205,27 @@ void* consume_processes(void* consumer_package)
         //printf("cid = %d, head pid = %d, pid to kill = %d\n", cid, (*consumer->head)->iProcessId, begin->iProcessId);
         struct timeval start, end;
         int previous_burst = begin->iBurstTime;
-        //print_list(*consumer->head);
-        simulateSJFProcess(begin, &start, &end);
+        int already_running = 0;
+        if(begin->iState == RUNNING || begin->iState == READY)
+            already_running = 1;
+        simulateRoundRobinProcess(begin, &start, &end);
         unsigned int response_time = getDifferenceInMilliSeconds(begin->oTimeCreated, start);
-        printf("cid = %d, pid = %d, previous burst = %d, new burst = %d", consumer->consumer_id, begin->iProcessId, previous_burst, begin->iBurstTime);
-        printf(", response time = %ld", response_time);
-        *(consumer->total_response_time) += response_time;
-
-        unsigned int turnaround_time = getDifferenceInMilliSeconds(begin->oTimeCreated, end);
-        printf(", turnaround time = %ld\n", turnaround_time);
-        //printf("\nprocess being killed. process list size = %d\n", list_size(*consumer->head));
-        *(consumer->total_turnaround_time) += turnaround_time;
-        remove_process(consumer->mutex_handle, consumer->head, begin);
+        printf("pid = %d, previous burst = %d, new burst = %d", begin->iProcessId, previous_burst, begin->iBurstTime);
+        if(!already_running)
+        {
+            printf(", response time = %ld", response_time);
+            *(consumer->total_response_time) += response_time;
+        }
+        // now delete it.
+        if(is_finished(begin))
+        {
+            unsigned int turnaround_time = getDifferenceInMilliSeconds(begin->oTimeCreated, end);
+            printf(", turnaround time = %ld", turnaround_time);
+            //printf("\nprocess being killed. process list size = %d\n", list_size(*consumer->head));
+            *(consumer->total_turnaround_time) += turnaround_time;
+            remove_process(consumer->mutex_handle, consumer->head, begin);
+        }
+        printf("\n");
         //printf("finished removing process.\n");
         //printf("list size = %d, done = %d\n", list_size(*consumer->head), *(consumer->creating_finished));
         //pthread_mutex_unlock(consumer->mutex_handle);
